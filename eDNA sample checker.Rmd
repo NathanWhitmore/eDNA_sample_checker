@@ -1,0 +1,473 @@
+---
+title: "eDNA sample checker"
+runtime: shiny
+output:
+  flexdashboard::flex_dashboard:
+    navbar:
+      - { title: "reproducible.co.nz", href: "https://reproducible.co.nz", align: right }
+    orientation: rows
+    vertical_layout: fill
+    theme: spacelab
+    source_code: embed 
+---
+<style>
+
+body {
+  padding-top: 70px;
+}
+
+
+.navbar-brand {
+font-family: "Candara";
+  font-weight: bold;
+  font-size: 24px;
+}
+
+
+</style>
+
+```{r}
+
+# library(remotes)
+# note the version of flexdashboard required is 0.5.2
+#install_version("flexdashboard", version = "0.5.2", repos = "http://cran.us.r-project.org")
+library(flexdashboard)
+library(rmarkdown)
+library(markdown)
+library(knitr)
+library(shiny)
+library(sf)
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(sf)
+library(leaflet)
+library(DT)
+
+```
+
+
+Sample locations
+=====================================
+
+
+
+Column {.sidebar data-width=350}
+-------------------------------------
+
+* This dashboard assumes a copy of the Geospatial Data Abstraction Library [GDAL](https://gdal.org/) is present on the computer (which allows spatial rendering). If you are using a local version of this dashboard and it is not working please download the copy of GDAL.
+
+* Spatial coordinates must be in a decimal longlat format with the columns named "Longitude" and "Latitude".
+
+
+<br/>
+
+Select the **xlsx** file intended for upload (e.g. to Wilderlab).
+
+
+```{r, echo = FALSE}
+fileInput("file1", "Choose file to check",
+                    multiple = FALSE)
+```
+
+
+```{r}
+options(shiny.maxRequestSize=50*1024^2) 
+
+dataset <- eventReactive(input$file1,{
+  
+  init <- read_excel(input$file1$datapath,
+                 col_types = c("numeric",
+                               "text",
+                               "text",
+                               "text",
+                               "numeric",
+                               "numeric",
+                               "numeric",
+                               "numeric",
+                               "text",
+                               "text"
+
+                               ))
+  
+  
+ init$`Date collected` <- ifelse(nchar(init$`Date collected`) == 5,
+  
+  as.numeric(init$`Date collected`) %>% as.Date(origin = "1899-12-30") %>% 
+    as.character(),
+  init$`Date collected`
+ )
+ 
+ init$`Excel row` <- 1:nrow(init) +1
+ 
+ init <- init %>%
+  relocate(`Excel row`)
+ 
+ init
+
+})
+```
+
+
+Column
+-------------------------------------
+
+### **Data**    (Note: dates have been change to ISO format)
+
+```{r}
+# make tidied data frame
+
+renderDataTable({
+
+  datatable(dataset(), 
+               options = list(
+    filter = "none",
+    scrollX = TRUE,
+    scrollY = "650px",
+    "pageLength" = -1,
+    dom = 'ft',
+    
+    columnDefs = list(list(
+      className = 'dt-center',
+      targets = 0:2
+    )))
+  , rownames = FALSE)
+    
+})
+                
+```
+
+
+
+Examine
+=====================================
+
+
+Column {.sidebar data-width=350}
+-------------------------------------
+
+**Bounding box:**
+*Southern Pacific / Eastern Indian ocean*
+
+The bounding box helps determines which spatial files might be suspect.
+
+<br/>
+
+```{r}
+sliderInput("slider_lat", label = "Latitudinal Range", min = -90, 
+        max = 0, value = c(-48, -33))
+```
+
+
+```{r}
+sliderInput("slider_long", label = "Longitude Range", min = 90, 
+        max = 180, value = c(166, 179))
+```
+
+<br/>
+
+Note: a spatial jitter has been applied so that points do not overlap. This will mean points will differ slightly from actual sampling location.
+
+<br/>
+
+
+
+```{r}
+# Create placeholder for the download button
+uiOutput("downloadUI")
+```
+
+```{r, echo = FALSE}
+output$downloadUI <- renderUI( {
+  downloadButton("downBtn", "Download suspect data", style = "width:100%;")
+})
+
+output$downBtn <- downloadHandler(
+  filename = function() {paste0("Suspect ", 
+                               sub("\\..*", "",input$file1[[1]][1]),
+                               ".csv")},
+  content = function(file) {
+    write.csv(suspect.down(), file, row.names = FALSE)
+  }
+)
+```
+
+
+Column 
+-------------------------------------
+
+```{r}
+
+# identify duplicated IDs
+
+duplicated.id <- reactive({
+
+  a <- which(duplicated(dataset()[,2], fromLast = TRUE)) +1
+  b <- which(duplicated(dataset()[,2])) +1
+  
+  my.dups <- paste(a, "and",  b)
+  my.dups  <- paste(my.dups, collapse = " & ")
+  my.dups
+
+})
+```
+
+
+
+### **Potential errors**   (Note: if longtitude is nonsensical no points can render)
+
+
+```{r}
+# make data frame of errors
+
+potential <- reactive({
+  
+  req(input$file1)
+  
+  # make data frame
+  Column.name <- names(dataset())[-1] # remove excel row ref
+  Issues <- NA
+  
+  df <- data.frame(Column.name, Issues )
+  colnames(df) <- c("Column name", "Issue with excel row  number")
+  
+  # fill in specific values
+  df[1,2] <- duplicated.id()
+  
+  # date check if integer(0)
+  date.ok <- which(is.na(dataset()$`Date collected`))
+  df[4,2] <- ifelse(identical(date.ok, integer(0)),  "", date.ok +1) 
+  
+  # date check if longlat integer(0)
+  lat.ok <- which(dataset()$Latitude > input$slider_lat[2] | dataset()$Latitude < input$slider_lat[1])
+  long.ok <- which(dataset()$Longitude > input$slider_long[2] | dataset()$Longitude < input$slider_long[1])  
+  
+  df[5,2] <- ifelse(identical(lat.ok, integer(0)),  "",lat.ok +1)
+  df[6,2] <- ifelse(identical(long.ok, integer(0)),  "", paste(long.ok+1))
+
+  
+  
+  df
+
+})
+
+renderDataTable({
+  
+  datatable(potential(), 
+            rownames = FALSE,
+            options = list(dom = 'ft'))
+             
+  
+})
+```
+
+
+
+
+### **Map**
+
+```{r}
+my.spatial <- reactive ({
+  
+  dataset() %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  st_jitter(amount = 0.0001) 
+  
+  
+
+  
+})
+```
+
+```{r}
+# suspect observations
+
+suspect <- reactive({
+  
+  a <- which(duplicated(dataset()[,2], fromLast = TRUE)) 
+  b <- which(duplicated(dataset()[,2])) 
+  
+  c <- which(is.na(dataset()$`Date collected`))
+  d <- which(dataset()$Latitude > input$slider_lat[2] | dataset()$Latitude < input$slider_lat[1])
+  e <- which(dataset()$Longitude > input$slider_long[2] | dataset()$Longitude < input$slider_long[1])
+  
+  issues <- c(a, b, c, d, e)
+
+  suspect <- my.spatial()
+  
+  
+  
+  suspect$Issues <- "Probably okay"
+  suspect$Issues[issues] <- "Suspect"
+  suspect$A <- ""
+  suspect$B <- ""
+  suspect$C <- ""
+  suspect$D <- ""
+  suspect$E <- ""
+  suspect$A[a] <- "id "
+  suspect$B[b] <- "id "
+  suspect$C[c] <- "date "
+  suspect$D[d] <- "lat "
+  suspect$E[e] <- "long "
+ 
+  suspect$Reason <- paste(suspect$A, suspect$B, suspect$C, suspect$D, suspect$E)
+  
+  suspect$A <- NULL
+  suspect$B <- NULL
+  suspect$C <- NULL
+  suspect$D <- NULL
+  suspect$E <- NULL
+  
+  suspect
+  
+})
+
+
+```
+
+```{r}
+map <- reactive({
+  
+  map.suspect <- suspect()[,1:11]
+  
+  # area of interest
+  aoi <- data.frame(expand.grid(input$slider_long, input$slider_lat))
+  aoi  <- aoi[c(1,2, 4,3), ]
+  colnames(aoi) <- c("long", "lat")
+
+   poly.aoi <- st_as_sf(aoi,                         
+         coords = c("long", "lat"),
+         crs = 4327) %>%
+     st_combine() %>% 
+     st_cast("POLYGON")
+  
+  
+  pal <- colorFactor(
+  palette = c('yellow', 'red'),
+  domain = map.suspect$Issues
+)
+  # map 
+  leaflet() %>%
+  addProviderTiles(
+    "Esri.WorldImagery",
+    # give the layer a name
+    group = "World"
+  )  %>%
+  addPolygons(data = poly.aoi,
+               color = "white") %>%
+  addCircleMarkers(
+      data = map.suspect,
+      color = ~ pal(Issues),
+      fillOpacity = 0.3,
+     # clusterOptions = markerClusterOptions(),
+      popup = paste(
+        "Date:",
+        suspect()$`Date collected`,
+        "<br>",
+        "Kit / UID:",
+        suspect()$`Kit or UID number`,
+        "<br>",
+        "Collector:",
+        suspect()$Collector,
+        "<br>",
+        "Excel row:",
+        suspect()$`Excel row`
+      ) 
+      ) %>%
+    addLegend("bottomright", 
+            colors = c("yellow", "red"),
+            labels = c("Probably okay", "Suspect")
+    )
+  })
+
+renderLeaflet({
+  
+  map()
+  
+})
+```
+
+
+
+Suspect
+=====================================
+
+
+```{r}
+
+suspect.down  <- reactive({
+
+  suspect.down <- suspect()
+  st_geometry(suspect.down) <- NULL
+  suspect.down <- cbind(st_coordinates(suspect()), suspect.down)
+  
+  # reorder columns
+  suspect.down <- suspect.down[, c(3, 4, 5, 6, 7, 2, 1, 8:13)]
+  
+  # remove new excel row column
+  suspect.down <- suspect.down[,-1]
+  
+  # rename X and Y
+  suspect.down <- suspect.down %>% rename(Latitude = Y, 
+                                          Longitude = X)
+  
+  suspect.down
+  
+})
+```
+  
+```{r}  
+renderDataTable({
+  
+  datatable(suspect.down(), 
+               options = list(
+    filter = "none",
+    scrollX = TRUE,
+    scrollY = "650px",
+    "pageLength" = -1,
+    dom = 'ft',
+    
+    columnDefs = list(list(
+      className = 'dt-center',
+      targets = 0:2
+    )))
+  , rownames = FALSE)
+             
+  
+})
+```
+
+
+Video guide
+=====================================
+
+
+Column {.sidebar data-width=350}
+-------------------------------------
+
+
+**Help video**
+
+To render the video locally you may have to click *Open in Browser* on the top lefthand side of this window. Alternatively, please click the link [here](https://www.loom.com/share/55f7f95fc1554c42a126c91392ac674e?sid=9c28f410-07eb-4c53-be03-2e4626d361b0) for direct access.
+
+<br/>
+
+**References**
+
+The spatial transformations used in this dashboard were implemented using the [sf](https://cran.r-project.org/web/packages/sf/) package: 
+
+*Edzer Pebesma and Roger Bivand and Sebastian Luque (2023). Spatial Data Science: With Applications in R. Chapman and Hall. CRC Press.*
+
+<br/>
+
+**Acknowledgements**
+
+The code for this dashboard was written by Nathan Whitmore is freely available for reuse and modification via an [MIT license](https://choosealicense.com/licenses/mit/). The source code can be found under the under the '</> Source Code' tab or via [GitHub](https://github.com/NathanWhitmore/eDNA_sample_checker).  Dashboard creation was funded by the Otago Regional Council. Special thanks go to Scott Jarvie and Ciaran Campbell for instigating this project.
+
+Column {.tabset .tabset-fade}
+-------------------------------------
+
+### Video
+<div style="position: relative; padding-bottom: 56.25%; height: 0;"><iframe src="https://www.loom.com/embed/f1ce4a805fde4f2f843f4c77547b7727?sid=33bf5dcb-49f2-439c-91ae-4dd44daf5211" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 80%; height: 80%;"></iframe></div>
+
+
