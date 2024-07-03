@@ -4,11 +4,15 @@ runtime: shiny
 output:
   flexdashboard::flex_dashboard:
     navbar:
-      - { title: "reproducible.co.nz", href: "https://reproducible.co.nz", align: right }
+    - title: reproducible.co.nz
+      href: https://reproducible.co.nz
+      align: right
     orientation: rows
     vertical_layout: fill
     theme: spacelab
-    source_code: embed 
+    source_code: embed
+resource_files:
+- ORC logo.png
 ---
 <style>
 
@@ -28,9 +32,9 @@ font-family: "Candara";
 
 ```{r}
 
-# library(remotes)
+library(remotes)
 # note the version of flexdashboard required is 0.5.2
-#install_version("flexdashboard", version = "0.5.2", repos = "http://cran.us.r-project.org")
+# install_version("flexdashboard", version = "0.5.2", repos = "http://cran.us.r-project.org")
 library(flexdashboard)
 library(rmarkdown)
 library(markdown)
@@ -54,6 +58,10 @@ Sample locations
 
 Column {.sidebar data-width=350}
 -------------------------------------
+
+![](ORC logo.png){width=40%}
+
+<br/>
 
 * This dashboard assumes a copy of the Geospatial Data Abstraction Library [GDAL](https://gdal.org/) is present on the computer (which allows spatial rendering). If you are using a local version of this dashboard and it is not working please download the copy of GDAL.
 
